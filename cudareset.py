@@ -23,6 +23,23 @@ except ImportError:
     win32api = None
     win32con = None
 
+# Additional optional imports
+try:
+    import cupy as cp
+except ImportError:
+    cp = None
+
+try:
+    import torch, gc
+except ImportError:
+    torch = None
+    gc = None
+
+try:
+    import pynvml
+except ImportError:
+    pynvml = None
+
 class Worker(QtCore.QThread):
     log = QtCore.Signal(str)
     finished = QtCore.Signal()
@@ -35,6 +52,10 @@ class Worker(QtCore.QThread):
             ("NVAPI GPU Reset", self.reset_nvapi),
             ("Win Key Driver Reset", self.reset_winkey),
             ("DevCon GPU Toggle", self.reset_devcon),
+            ("CuPy Memory Pool Clear", self.clear_cupy_pool),
+            ("PyTorch Cache Clear", self.clear_pytorch_cache),
+            ("NVML Memory Monitor", self.monitor_nvml),
+            ("Kill GPU Processes", self.kill_gpu_processes),
         ]
         for name, func in methods:
             self.log.emit(f"Starting {name}...")
@@ -100,6 +121,39 @@ class Worker(QtCore.QThread):
         gpu_id = r"PCI\\VEN_10DE&DEV_1C8C&SUBSYS_07981028"
         subprocess.run(["devcon", "disable", gpu_id], check=True)
         subprocess.run(["devcon", "enable", gpu_id], check=True)
+
+    def clear_cupy_pool(self):
+        if not cp:
+            raise ImportError("CuPy not installed")
+        cp.get_default_memory_pool().free_all_blocks()
+
+    def clear_pytorch_cache(self):
+        if not torch:
+            raise ImportError("PyTorch not installed")
+        if 'gc' in globals() and gc:
+            gc.collect()
+        torch.cuda.empty_cache()
+
+    def monitor_nvml(self):
+        if not pynvml:
+            raise ImportError("pynvml not installed")
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        self.log.emit(f"Free: {mem.free}, Total: {mem.total}")
+        pynvml.nvmlShutdown()
+
+    def kill_gpu_processes(self):
+        try:
+            output = subprocess.check_output([
+                "nvidia-smi",
+                "--query-compute-apps=pid",
+                "--format=csv,noheader,nounits",
+            ])
+            for pid in output.decode().split():
+                subprocess.run(["taskkill", "/PID", pid, "/F"], check=True)
+        except Exception as e:
+            raise RuntimeError(e)
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
