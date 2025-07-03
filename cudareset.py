@@ -1,5 +1,5 @@
 from PySide6 import QtWidgets, QtCore
-import ctypes, subprocess, sys
+import ctypes, subprocess, sys, os
 
 # Optional imports for extended reset methods
 try:
@@ -150,7 +150,11 @@ class Worker(QtCore.QThread):
                 "--query-compute-apps=pid",
                 "--format=csv,noheader,nounits",
             ])
+            own_pid = str(os.getpid())
             for pid in output.decode().split():
+                if pid.strip() == own_pid:
+                    self.log.emit(f"Skipping own process {pid}")
+                    continue
                 subprocess.run(["taskkill", "/PID", pid, "/F"], check=True)
         except Exception as e:
             raise RuntimeError(e)
